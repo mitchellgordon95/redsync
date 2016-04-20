@@ -28,11 +28,8 @@ func TestRedsync(t *testing.T) {
 	pools := newMockPools(8)
 	rs := New(pools)
 
-	mutex := rs.NewMutex("test-redsync")
-	err := mutex.Lock()
-	if err != nil {
+	m := rs.NewMutex("test-redsync")
+	_ = m.Lock()
 
-	}
-
-	assertAcquired(t, pools, mutex)
+	assertAcquired(t, pools, m.(*mutex))
 }

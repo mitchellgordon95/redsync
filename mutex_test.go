@@ -13,18 +13,18 @@ func TestMutex(t *testing.T) {
 	pools := newMockPools(8)
 	mutexes := newTestMutexes(pools, "test-mutex", 8)
 	orderCh := make(chan int)
-	for i, mutex := range mutexes {
-		go func(i int, mutex *Mutex) {
-			err := mutex.Lock()
+	for i, m := range mutexes {
+		go func(i int, m mutex) {
+			err := m.Lock()
 			if err != nil {
 				t.Fatalf("Expected err == nil, got %q", err)
 			}
-			defer mutex.Unlock()
+			defer m.Unlock()
 
-			assertAcquired(t, pools, mutex)
+			assertAcquired(t, pools, &m)
 
 			orderCh <- i
-		}(i, mutex)
+		}(i, m)
 	}
 	for range mutexes {
 		<-orderCh
@@ -34,22 +34,22 @@ func TestMutex(t *testing.T) {
 func TestMutexExtend(t *testing.T) {
 	pools := newMockPools(8)
 	mutexes := newTestMutexes(pools, "test-mutex-extend", 1)
-	mutex := mutexes[0]
+	m := mutexes[0]
 
-	err := mutex.Lock()
+	err := m.Lock()
 	if err != nil {
 		t.Fatalf("Expected err == nil, got %q", err)
 	}
-	defer mutex.Unlock()
+	defer m.Unlock()
 
 	time.Sleep(1 * time.Second)
 
-	expiries := getPoolExpiries(pools, mutex.name)
-	ok := mutex.Extend()
+	expiries := getPoolExpiries(pools, m.name)
+	ok := m.Extend()
 	if !ok {
 		t.Fatalf("Expected ok == true, got %v", ok)
 	}
-	expiries2 := getPoolExpiries(pools, mutex.name)
+	expiries2 := getPoolExpiries(pools, m.name)
 
 	for i, expiry := range expiries {
 		if expiry >= expiries2[i] {
@@ -62,19 +62,19 @@ func TestMutexQuorum(t *testing.T) {
 	pools := newMockPools(4)
 	for mask := 0; mask < 1<<uint(len(pools)); mask++ {
 		mutexes := newTestMutexes(pools, "test-mutex-partial-"+strconv.Itoa(mask), 1)
-		mutex := mutexes[0]
-		mutex.tries = 1
+		m := mutexes[0]
+		m.tries = 1
 
-		n := clogPools(pools, mask, mutex)
+		n := clogPools(pools, mask, m)
 
 		if n >= len(pools)/2+1 {
-			err := mutex.Lock()
+			err := m.Lock()
 			if err != nil {
 				t.Fatalf("Expected err == nil, got %q", err)
 			}
-			assertAcquired(t, pools, mutex)
+			assertAcquired(t, pools, &m)
 		} else {
-			err := mutex.Lock()
+			err := m.Lock()
 			if err != ErrFailed {
 				t.Fatalf("Expected err == %q, got %q", ErrFailed, err)
 			}
@@ -133,7 +133,7 @@ func getPoolExpiries(pools []Pool, name string) []int {
 	return expiries
 }
 
-func clogPools(pools []Pool, mask int, mutex *Mutex) int {
+func clogPools(pools []Pool, mask int, m mutex) int {
 	n := 0
 	for i, pool := range pools {
 		if mask&(1<<uint(i)) == 0 {
@@ -141,7 +141,7 @@ func clogPools(pools []Pool, mask int, mutex *Mutex) int {
 			continue
 		}
 		conn := pool.Get()
-		_, err := conn.Do("SET", mutex.name, "foobar")
+		_, err := conn.Do("SET", m.name, "foobar")
 		conn.Close()
 		if err != nil {
 			panic(err)
@@ -150,10 +150,10 @@ func clogPools(pools []Pool, mask int, mutex *Mutex) int {
 	return n
 }
 
-func newTestMutexes(pools []Pool, name string, n int) []*Mutex {
-	mutexes := []*Mutex{}
+func newTestMutexes(pools []Pool, name string, n int) []mutex {
+	mutexes := []mutex{}
 	for i := 0; i < n; i++ {
-		mutexes = append(mutexes, &Mutex{
+		mutexes = append(mutexes, mutex{
 			name:   name,
 			expiry: 8 * time.Second,
 			tries:  32,
@@ -166,15 +166,15 @@ func newTestMutexes(pools []Pool, name string, n int) []*Mutex {
 	return mutexes
 }
 
-func assertAcquired(t *testing.T, pools []Pool, mutex *Mutex) {
+func assertAcquired(t *testing.T, pools []Pool, m *mutex) {
 	n := 0
-	values := getPoolValues(pools, mutex.name)
+	values := getPoolValues(pools, m.name)
 	for _, value := range values {
-		if value == mutex.value {
+		if value == m.value {
 			n++
 		}
 	}
-	if n < mutex.quorum {
-		t.Fatalf("Expected n >= %d, got %d", mutex.quorum, n)
+	if n < m.quorum {
+		t.Fatalf("Expected n >= %d, got %d", m.quorum, n)
 	}
 }

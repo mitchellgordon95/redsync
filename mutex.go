@@ -10,7 +10,14 @@ import (
 )
 
 // A Mutex is a distributed mutual exclusion lock.
-type Mutex struct {
+type Mutex interface {
+	Lock() error
+	Unlock() bool
+	Extend() bool
+}
+
+// mutex is an implementation of Mutex based on redis
+type mutex struct {
 	name   string
 	expiry time.Duration
 
@@ -30,7 +37,7 @@ type Mutex struct {
 }
 
 // Lock locks m. In case it returns an error on failure, you may retry to acquire the lock by calling this method again.
-func (m *Mutex) Lock() error {
+func (m *mutex) Lock() error {
 	m.nodem.Lock()
 	defer m.nodem.Unlock()
 
@@ -67,7 +74,7 @@ func (m *Mutex) Lock() error {
 }
 
 // Unlock unlocks m and returns the status of unlock. It is a run-time error if m is not locked on entry to Unlock.
-func (m *Mutex) Unlock() bool {
+func (m *mutex) Unlock() bool {
 	m.nodem.Lock()
 	defer m.nodem.Unlock()
 
@@ -82,7 +89,7 @@ func (m *Mutex) Unlock() bool {
 }
 
 // Extend resets the mutex's expiry and returns the status of expiry extension. It is a run-time error if m is not locked on entry to Extend.
-func (m *Mutex) Extend() bool {
+func (m *mutex) Extend() bool {
 	m.nodem.Lock()
 	defer m.nodem.Unlock()
 
@@ -96,7 +103,7 @@ func (m *Mutex) Extend() bool {
 	return n >= m.quorum
 }
 
-func (m *Mutex) genValue() (string, error) {
+func (m *mutex) genValue() (string, error) {
 	b := make([]byte, 32)
 	_, err := rand.Read(b)
 	if err != nil {
@@ -105,7 +112,7 @@ func (m *Mutex) genValue() (string, error) {
 	return base64.StdEncoding.EncodeToString(b), nil
 }
 
-func (m *Mutex) acquire(pool Pool, value string) bool {
+func (m *mutex) acquire(pool Pool, value string) bool {
 	conn := pool.Get()
 	defer conn.Close()
 	reply, err := redis.String(conn.Do("SET", m.name, value, "NX", "PX", int(m.expiry/time.Millisecond)))
@@ -120,7 +127,7 @@ var deleteScript = redis.NewScript(1, `
 	end
 `)
 
-func (m *Mutex) release(pool Pool, value string) bool {
+func (m *mutex) release(pool Pool, value string) bool {
 	conn := pool.Get()
 	defer conn.Close()
 	status, err := deleteScript.Do(conn, m.name, value)
@@ -135,7 +142,7 @@ var touchScript = redis.NewScript(1, `
 	end
 `)
 
-func (m *Mutex) touch(pool Pool, value string, expiry int) bool {
+func (m *mutex) touch(pool Pool, value string, expiry int) bool {
 	conn := pool.Get()
 	defer conn.Close()
 	status, err := redis.String(touchScript.Do(conn, m.name, value, expiry))
